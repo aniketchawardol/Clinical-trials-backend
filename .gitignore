@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Node modules (leftovers)
+node_modules/
+package-lock.json
+package.json
+
+# Chainlit leftovers
+.chainlit/
+
+# Poetry
+poetry_err.txt
+
+# LangGraph / Data
+chroma_db/
+data/bm25_index.pkl
+data/trials.geojson
+# DO NOT IGNORE mock_trials.csv because load_mock_csv needs it to build the DB
+# data/mock_trials.csv 
+
+# Logs
+*.log
+server_err*.txt
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store

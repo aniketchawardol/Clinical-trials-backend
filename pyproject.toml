@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "clinicaltrials-backend"
+version = "0.1.0"
+description = "Backend for Clinical Trials Prototype"
+authors = ["Antigravity"]
+packages = []  # scripts-only project; no installable Python package
+
+[tool.poetry.dependencies]
+python = "^3.12"
+langgraph = "^0.2.14"
+chromadb = "^1.0.0"
+rank-bm25 = "^0.2.2"
+google-genai = "^1.0.0"
+pandas = "^2.2.2"
+geopy = "^2.4.1"
+python-dotenv = "^1.0.1"
+fastapi = "*"
+uvicorn = ">=0.25.0,<0.26.0"
+pydantic = "^2.8.2"
+requests = "^2.32.0"
+typing-extensions = "^4.12.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
