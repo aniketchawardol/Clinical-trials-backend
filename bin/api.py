@@ -1,18 +1,18 @@
-"""
-FastAPI server — Clinical Trials backend.
+﻿"""
+FastAPI server â€” Clinical Trials backend.
 
 Endpoints
 ---------
-GET  /api/trials   → GeoJSON FeatureCollection (optionally filtered by location/cancer_type)
-GET  /api/meta     → distinct filter values for UI dropdowns
-POST /api/chat     → LangGraph agent: intent → guardrails → geocode → RAG → reply + GeoJSON
-GET  /health       → liveness check
+GET  /api/trials   â†’ GeoJSON FeatureCollection (optionally filtered by location/cancer_type)
+GET  /api/meta     â†’ distinct filter values for UI dropdowns
+POST /api/chat     â†’ LangGraph agent: intent â†’ guardrails â†’ geocode â†’ RAG â†’ reply + GeoJSON
+GET  /health       â†’ liveness check
 """
 import json
 import math
 import os
 import pickle
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 import chromadb
 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
@@ -86,7 +86,7 @@ def _load_indexes() -> None:
         _bm25_ids = data["ids"]
         print(f"[bm25]     loaded {len(_bm25_ids)} docs")
     else:
-        print("[bm25]     index not found — run 'python -m data.load_mock_csv' first")
+        print("[bm25]     index not found â€” run 'python -m data.load_mock_csv' first")
 
     # ChromaDB
     if os.path.exists(CHROMA_DIR):
@@ -100,7 +100,7 @@ def _load_indexes() -> None:
         except Exception as e:
             print(f"[chromadb] could not load collection: {e}")
     else:
-        print("[chromadb] chroma_db directory not found — run load_mock_csv first")
+        print("[chromadb] chroma_db directory not found â€” run load_mock_csv first")
 
 
 _load_indexes()
@@ -150,7 +150,7 @@ def _clean(value: Any) -> Any:
 
 
 def get_coordinates(location_str: str) -> Optional[tuple[float, float]]:
-    """MapTiler geocoding → (lat, lon). Returns None on failure."""
+    """MapTiler geocoding â†’ (lat, lon). Returns None on failure."""
     token = os.environ.get("MAPTILER_API_KEY")
     if not token:
         print("MAPTILER_API_KEY not set")
@@ -179,7 +179,7 @@ def rag_search(query: str, n_results: int = 500) -> list[str]:
 
     scores: dict[str, float] = {}
 
-    # BM25 — keyword overlap
+    # BM25 â€” keyword overlap
     if _bm25_index is not None:
         tokens = query.lower().split()
         bm25_scores = _bm25_index.get_scores(tokens)
@@ -188,7 +188,7 @@ def rag_search(query: str, n_results: int = 500) -> list[str]:
                 tid = _bm25_ids[idx]
                 scores[tid] = scores.get(tid, 0.0) + score
 
-    # ChromaDB — semantic similarity
+    # ChromaDB â€” semantic similarity
     if _chroma_collection is not None:
         try:
             results = _chroma_collection.query(
@@ -213,7 +213,7 @@ def filter_trials(
     """
     Distance filter combined with optional RAG-based cancer type matching.
     When cancer_type is given, hybrid BM25+ChromaDB retrieval is used so that
-    synonyms ('blood cancer' → Leukemia, 'NSCLC' → Lung Cancer) are handled.
+    synonyms ('blood cancer' â†’ Leukemia, 'NSCLC' â†’ Lung Cancer) are handled.
     """
     rag_id_set: Optional[set[str]] = None
     if cancer_type:
@@ -271,10 +271,13 @@ import re
 
 class AgentState(TypedDict):
     """Shared state passed through every node in the graph."""
-    message: str
+    messages: List[Dict[str, str]]
     # Intent
     location: Optional[str]
     cancer_type: Optional[str]
+    age: Optional[str]
+    biological_sex: Optional[str]
+    diagnosis_date: Optional[str]
     is_medical_advice: bool
     is_off_topic: bool
     # Geocoding
@@ -290,25 +293,30 @@ class AgentState(TypedDict):
 
 _INTENT_PROMPT = """\
 You are a routing assistant for a Canadian cancer clinical trial finder.
-Extract structured intent from the user message and reply in JSON only.
+Extract structured intent from the conversation history and reply in JSON only.
 
 Keys:
-  location          – city, address, or postal code mentioned (string or null)
-  cancer_type       – specific cancer type mentioned (string or null); normalise to common name
-  is_medical_advice – true if the user asks for diagnosis, prognosis, or treatment advice
-  is_off_topic      – true if the query has nothing to do with clinical trials or cancer
+  location          - city, address, or postal code mentioned (string or null)
+  cancer_type       - specific cancer type mentioned (string or null); normalise to common name
+  age               - patient's age if mentioned (string or null)
+  biological_sex    - patient's biological sex if mentioned (string or null)
+  diagnosis_date    - diagnosis date if mentioned (string or null)
+  is_medical_advice - true if the user asks for diagnosis, prognosis, or treatment advice
+  is_off_topic      - true if the query has nothing to do with clinical trials or cancer
 
 Examples:
   "Find breast cancer trials near Toronto"
-    → {"location":"Toronto","cancer_type":"Breast Cancer","is_medical_advice":false,"is_off_topic":false}
+    -> {"location":"Toronto","cancer_type":"Breast Cancer","age":null,"biological_sex":null,"diagnosis_date":null,"is_medical_advice":false,"is_off_topic":false}
+  "I am 56, female, diagnosed in 2023 with lung cancer in Calgary"
+    -> {"location":"Calgary","cancer_type":"Lung Cancer","age":"56","biological_sex":"Female","diagnosis_date":"2023","is_medical_advice":false,"is_off_topic":false}
   "blood cancer clinics in Vancouver"
-    → {"location":"Vancouver","cancer_type":"Leukemia","is_medical_advice":false,"is_off_topic":false}
+    -> {"location":"Vancouver","cancer_type":"Leukemia","age":null,"biological_sex":null,"diagnosis_date":null,"is_medical_advice":false,"is_off_topic":false}
   "NSCLC trials in Calgary"
-    → {"location":"Calgary","cancer_type":"Lung Cancer","is_medical_advice":false,"is_off_topic":false}
+    -> {"location":"Calgary","cancer_type":"Lung Cancer","age":null,"biological_sex":null,"diagnosis_date":null,"is_medical_advice":false,"is_off_topic":false}
   "Am I in remission?"
-    → {"location":null,"cancer_type":null,"is_medical_advice":true,"is_off_topic":false}
+    -> {"location":null,"cancer_type":null,"age":null,"biological_sex":null,"diagnosis_date":null,"is_medical_advice":true,"is_off_topic":false}
   "What is the capital of France?"
-    → {"location":null,"cancer_type":null,"is_medical_advice":false,"is_off_topic":true}
+    -> {"location":null,"cancer_type":null,"age":null,"biological_sex":null,"diagnosis_date":null,"is_medical_advice":false,"is_off_topic":true}
 """
 
 
@@ -365,17 +373,49 @@ def _regex_extract(message: str) -> dict:
     return {
         "location": location,
         "cancer_type": cancer_type,
+        "age": None,
+        "biological_sex": None,
+        "diagnosis_date": None,
         "is_medical_advice": is_medical_advice,
         "is_off_topic": False,
     }
 
 
+def _format_transcript(messages: List[Dict[str, str]]) -> str:
+    """Convert message history into a readable transcript for prompting."""
+    lines: list[str] = []
+    for msg in messages:
+        role_raw = str(msg.get("role", "")).strip().lower()
+        content = str(msg.get("content", "")).strip()
+        if not content:
+            continue
+        if role_raw == "user":
+            role = "User"
+        elif role_raw == "assistant":
+            role = "Assistant"
+        else:
+            role = role_raw.capitalize() if role_raw else "User"
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines)
+
+
+def _last_user_message_content(messages: List[Dict[str, str]]) -> str:
+    """Return the latest user message content for lightweight fallbacks."""
+    for msg in reversed(messages):
+        if str(msg.get("role", "")).strip().lower() == "user":
+            return str(msg.get("content", "")).strip()
+    return ""
+
+
 def node_extract_intent(state: AgentState) -> AgentState:
     global _gemini_disabled
     parsed = {}
+    messages = state.get("messages", [])
+    last_user_message = _last_user_message_content(messages)
     client = _get_gemini_client()
     if client is not None:
-        prompt = _INTENT_PROMPT + f'\n\nUser: "{state["message"]}"'
+        messages_str = json.dumps(messages, ensure_ascii=False)
+        prompt = f"{_INTENT_PROMPT}\n\nConversation history:\n{messages_str}"
         try:
             resp = client.models.generate_content(
                 model="gemini-2.5-flash",
@@ -386,7 +426,7 @@ def node_extract_intent(state: AgentState) -> AgentState:
             parsed = json.loads(resp.text)
         except genai_errors.ClientError as e:
             if e.code == 429:
-                print("[intent] quota exhausted — disabling Gemini for this session, using regex fallback")
+                print("[intent] quota exhausted â€” disabling Gemini for this session, using regex fallback")
                 _gemini_disabled = True
             else:
                 print(f"[intent] Gemini error {e.code}: {e}")
@@ -395,7 +435,7 @@ def node_extract_intent(state: AgentState) -> AgentState:
 
     # Fall back to regex if Gemini gave nothing useful or is unavailable
     if not parsed.get("location") and not parsed.get("cancer_type") and not parsed.get("is_medical_advice") and not parsed.get("is_off_topic"):
-        fallback = _regex_extract(state["message"])
+        fallback = _regex_extract(last_user_message)
         print(f"[intent] regex fallback: {fallback}")
         parsed = fallback
 
@@ -403,6 +443,9 @@ def node_extract_intent(state: AgentState) -> AgentState:
         **state,
         "location": parsed.get("location"),
         "cancer_type": parsed.get("cancer_type"),
+        "age": str(parsed.get("age")).strip() if parsed.get("age") not in (None, "") else None,
+        "biological_sex": str(parsed.get("biological_sex")).strip() if parsed.get("biological_sex") not in (None, "") else None,
+        "diagnosis_date": str(parsed.get("diagnosis_date")).strip() if parsed.get("diagnosis_date") not in (None, "") else None,
         "is_medical_advice": bool(parsed.get("is_medical_advice", False)),
         "is_off_topic": bool(parsed.get("is_off_topic", False)),
     }
@@ -429,6 +472,36 @@ def node_guardrails(state: AgentState) -> AgentState:
             "geojson": None,
         }
     return state
+
+
+def node_elicit_slots(state: AgentState) -> AgentState:
+    cancer_type = state.get("cancer_type")
+    if not cancer_type:
+        return state
+
+    missing_fields: list[str] = []
+    if not state.get("age"):
+        missing_fields.append("age")
+    if not state.get("biological_sex"):
+        missing_fields.append("biological sex")
+    if not state.get("diagnosis_date"):
+        missing_fields.append("diagnosis date")
+
+    if not missing_fields:
+        return state
+
+    if len(missing_fields) == 1:
+        missing_text = missing_fields[0]
+    elif len(missing_fields) == 2:
+        missing_text = f"{missing_fields[0]} and {missing_fields[1]}"
+    else:
+        missing_text = f"{', '.join(missing_fields[:-1])}, and {missing_fields[-1]}"
+
+    reply = (
+        f"I can help with **{cancer_type}** trial matching. "
+        f"Before I run the search, could you share your **{missing_text}**?"
+    )
+    return {**state, "reply": reply, "geojson": None}
 
 
 def node_geocode(state: AgentState) -> AgentState:
@@ -484,6 +557,7 @@ def node_build_reply(state: AgentState) -> AgentState:
     location = state.get("location")
     cancer_type = state.get("cancer_type")
     trials = state.get("trials", [])
+    transcript = _format_transcript(state.get("messages", []))
 
     if not location:
         if cancer_type:
@@ -513,7 +587,7 @@ def node_build_reply(state: AgentState) -> AgentState:
     if not trials:
         reply = f"No trials found near **{location}**"
         reply += f" for **{cancer_type}**." if cancer_type else "."
-        reply += "\n\nTry broadening your search — I already looked within 500 km. Please consult your physician for more options."
+        reply += "\n\nTry broadening your search â€” I already looked within 500 km. Please consult your physician for more options."
         return {**state, "reply": reply, "geojson": geojson}
 
     # If we have trials and LLM is available, generate a response
@@ -533,7 +607,7 @@ def node_build_reply(state: AgentState) -> AgentState:
             f"Cancer Type: {cancer_type or 'Any'}\n"
             f"Total Trials Found: {len(trials)}\n"
             f"Top Matches Context:\n{context_str}\n\n"
-            f"User Message: \"{state['message']}\"\n\n"
+            f"Conversation Transcript:\n{transcript}\n\n"
             "Response:"
         )
         
@@ -546,7 +620,7 @@ def node_build_reply(state: AgentState) -> AgentState:
             return {**state, "reply": resp.text, "geojson": geojson}
         except genai_errors.ClientError as e:
             if e.code == 429:
-                print("[build_reply] quota exhausted — disabling Gemini for this session, using fallback")
+                print("[build_reply] quota exhausted â€” disabling Gemini for this session, using fallback")
                 _gemini_disabled = True
             else:
                 print(f"[build_reply] Gemini error {e.code}: {e}")
@@ -560,9 +634,9 @@ def node_build_reply(state: AgentState) -> AgentState:
     reply += ":\n"
     for t in trials[:3]:
         status = normalize_status(str(t.get("status", "")))
-        reply += f"\n• **{t['facility']}** — {status} ({t['distance_km']} km)"
+        reply += f"\nâ€¢ **{t['facility']}** â€” {status} ({t['distance_km']} km)"
     if len(trials) > 3:
-        reply += f"\n\n_…and {len(trials) - 3} more. Click map pins for details._"
+        reply += f"\n\n_â€¦and {len(trials) - 3} more. Click map pins for details._"
     reply += "\n\n*Disclaimer: This information is for reference only. Please consult your physician or oncologist before making any medical decisions.*"
 
     return {**state, "reply": reply, "geojson": geojson}
@@ -570,6 +644,11 @@ def node_build_reply(state: AgentState) -> AgentState:
 
 def _route_after_guardrails(state: AgentState) -> str:
     """Short-circuit to END when a guardrail already set a reply."""
+    return END if state.get("reply") else "elicit_slots"
+
+
+def _route_after_elicit_slots(state: AgentState) -> str:
+    """Ask follow-up question first, otherwise continue to geocoding."""
     return END if state.get("reply") else "geocode"
 
 
@@ -581,6 +660,7 @@ def _route_after_geocode(state: AgentState) -> str:
 _builder = StateGraph(AgentState)
 _builder.add_node("extract_intent", node_extract_intent)
 _builder.add_node("guardrails", node_guardrails)
+_builder.add_node("elicit_slots", node_elicit_slots)
 _builder.add_node("geocode", node_geocode)
 _builder.add_node("rag_retrieve", node_rag_retrieve)
 _builder.add_node("filter", node_filter)
@@ -589,6 +669,7 @@ _builder.add_node("build_reply", node_build_reply)
 _builder.set_entry_point("extract_intent")
 _builder.add_edge("extract_intent", "guardrails")
 _builder.add_conditional_edges("guardrails", _route_after_guardrails)
+_builder.add_conditional_edges("elicit_slots", _route_after_elicit_slots)
 _builder.add_conditional_edges("geocode", _route_after_geocode)
 _builder.add_edge("rag_retrieve", "filter")
 _builder.add_edge("filter", "build_reply")
@@ -650,7 +731,7 @@ def health():
 
 
 class ChatRequest(BaseModel):
-    message: str
+    messages: List[Dict[str, str]]
 
 
 class ChatResponse(BaseModel):
@@ -662,12 +743,15 @@ class ChatResponse(BaseModel):
 def chat(req: ChatRequest) -> ChatResponse:
     """
     Run the LangGraph agent pipeline:
-      extract_intent → guardrails → geocode → rag_retrieve → filter → build_reply
+      extract_intent â†’ guardrails â†’ elicit_slots â†’ geocode â†’ rag_retrieve â†’ filter â†’ build_reply
     """
     initial_state: AgentState = {
-        "message": req.message,
+        "messages": req.messages,
         "location": None,
         "cancer_type": None,
+        "age": None,
+        "biological_sex": None,
+        "diagnosis_date": None,
         "is_medical_advice": False,
         "is_off_topic": False,
         "coords": None,
@@ -684,3 +768,4 @@ def chat(req: ChatRequest) -> ChatResponse:
         return ChatResponse(reply="Sorry, something went wrong. Please try again.")
 
     return ChatResponse(reply=final_state["reply"], geojson=final_state.get("geojson"))
+
